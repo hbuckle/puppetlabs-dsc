@@ -226,8 +226,26 @@ function Get-TargetResource
         $InstallSQLDataDir = $DBServer.InstallDataDirectory
         $SQLUserDBDir = $DBServer.DefaultFile
         $SQLUserDBLogDir = $DBServer.DefaultLog
-#        $SQLTempDBDir = 
-#        $SQLTempDBLogDir = 
+        #To do - don't hardcode this path
+        Import-Module "C:\Program Files (x86)\Microsoft SQL Server\110\Tools\PowerShell\Modules\SQLPS\SQLPS.PSD1"
+$query = @"
+SELECT 
+name AS [LogicalName]
+,physical_name AS [Location]
+,state_desc AS [Status]
+FROM sys.master_files
+WHERE database_id = DB_ID(N'tempdb');
+"@
+        if($InstanceName -eq "MSSQLSERVER")
+        {
+            $rows = Invoke-Sqlcmd -Query $query -ServerInstance "localhost"
+        }
+        else
+        {
+            $rows = Invoke-Sqlcmd -Query $query -ServerInstance "localhost\$InstanceName"
+        }
+        $SQLTempDBDir = Split-Path ($rows | Where-Object {$_.logicalname -match "tempdev"}).Location -Parent
+        $SQLTempDBLogDir = Split-Path ($rows | Where-Object {$_.logicalname -match "templog"}).Location -Parent
         $SQLBackupDir = $DBServer.BackupDirectory
     }
     if($Services | Where-Object {$_.Name -eq $FTServiceName})
@@ -244,7 +262,7 @@ function Get-TargetResource
     {
         $Features += "AS,"
         $ASSvcAccountUsername = (Get-WmiObject -Class Win32_Service | Where-Object {$_.Name -eq $ASServiceName}).StartName
-        [System.Reflection.Assembly]::LoadWithPartialName("Microsoft.AnalysisServices")
+        $null = [System.Reflection.Assembly]::LoadWithPartialName("Microsoft.AnalysisServices")
         $ASServer = New-Object Microsoft.AnalysisServices.Server
         if($InstanceName -eq "MSSQLSERVER")
         {
@@ -266,6 +284,20 @@ function Get-TargetResource
     {
         $Features += "IS,"
         $ISSvcAccountUsername = (Get-WmiObject -Class Win32_Service | Where-Object {$_.Name -eq $ISServiceName}).StartName
+    }
+
+    $configPath = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\${SQLVersion}0\ConfigurationState"
+    if (Test-Path $configPath)
+    {
+        $connSetting = (Get-ItemProperty -Path $configPath).PSObject.Properties["Connectivity_Full"]
+        if ($connSetting -ne $null)
+        {
+            if ($connSetting.Value -eq 1)
+            {
+                $Features += "CONN,"
+                Write-Verbose "Connectivity services feature found"
+            }
+        }
     }
 
     $Products = Get-WmiObject -Class Win32_Product
@@ -330,6 +362,11 @@ function Get-TargetResource
                 $InstallSharedDir = (GetFirstItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Components" -Name "FEE2E540D20152D4597229B6CFBC0A69")
                 $InstallSharedWOWDir = (GetFirstItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Components" -Name "C90BFAC020D87EA46811C836AD3C507F")
             }
+            "13"
+            {
+                $InstallSharedDir = (GetFirstItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Components" -Name "FEE2E540D20152D4597229B6CFBC0A69")
+                $InstallSharedWOWDir = (GetFirstItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Components" -Name "A79497A344129F64CA7D69C56F5DD8B4")
+            }
         }
     }
 
@@ -350,8 +387,8 @@ function Get-TargetResource
         InstallSQLDataDir = $InstallSQLDataDir
         SQLUserDBDir = $SQLUserDBDir
         SQLUserDBLogDir = $SQLUserDBLogDir
-#        SQLTempDBDir = $SQLTempDBDir
-#        SQLTempDBLogDir = $SQLTempDBLogDir
+        SQLTempDBDir = $SQLTempDBDir
+        SQLTempDBLogDir = $SQLTempDBLogDir
         SQLBackupDir = $SQLBackupDir
         FTSvcAccountUsername = $FTSvcAccountUsername
         RSSvcAccountUsername = $RSSvcAccountUsername
@@ -540,11 +577,16 @@ function Set-TargetResource
 
     # Determine features to install
     $FeaturesToInstall = ""
-    foreach($Feature in $Features.Split(","))
-    {
-        if(!($SQLData.Features.Contains($Feature)))
+    foreach($feature in $Features.Split(","))
+    {   
+        if(($SQLVersion -eq "13") -and (($feature -eq "SSMS") -or ($feature -eq "ADV_SSMS")))
         {
-            $FeaturesToInstall += "$Feature,"
+            Throw New-TerminatingError -ErrorType FeatureNotSupported -FormatArgs @($feature) -ErrorCategory InvalidData
+        }
+
+        if(!($SQLData.Features.Contains($feature)))
+        {
+            $FeaturesToInstall += "$feature,"
         }
     }
     $Features = $FeaturesToInstall.Trim(",")
@@ -581,6 +623,17 @@ function Set-TargetResource
                 Set-Variable -Name "InstallSharedDir" -Value ""
             }
             if((Get-Variable -Name "InstallSharedWOWDir" -ErrorAction SilentlyContinue) -and (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Components\C90BFAC020D87EA46811C836AD3C507F" -ErrorAction SilentlyContinue))
+            {
+                Set-Variable -Name "InstallSharedWOWDir" -Value ""
+            }
+        }
+        "13"
+        {
+            if((Get-Variable -Name "InstallSharedDir" -ErrorAction SilentlyContinue) -and (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Components\FEE2E540D20152D4597229B6CFBC0A69" -ErrorAction SilentlyContinue))
+            {
+                Set-Variable -Name "InstallSharedDir" -Value ""
+            }
+            if((Get-Variable -Name "InstallSharedWOWDir" -ErrorAction SilentlyContinue) -and (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Components\A79497A344129F64CA7D69C56F5DD8B4" -ErrorAction SilentlyContinue))
             {
                 Set-Variable -Name "InstallSharedWOWDir" -Value ""
             }
