@@ -60,7 +60,7 @@ $invokeParams = @{
 }
 
 try{
-    $result = Invoke-DscResource @invokeParams
+    $result = Invoke-DscResource @invokeParams -Force
 }catch{
   $response.errormessage   = $_.Exception.Message
   return ($response | ConvertTo-Json -Compress)
