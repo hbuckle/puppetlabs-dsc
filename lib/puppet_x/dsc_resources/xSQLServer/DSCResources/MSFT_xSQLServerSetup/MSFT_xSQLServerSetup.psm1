@@ -227,7 +227,9 @@ function Get-TargetResource
         $SQLUserDBDir = $DBServer.DefaultFile
         $SQLUserDBLogDir = $DBServer.DefaultLog
         #To do - don't hardcode this path
-        Import-Module "C:\Program Files (x86)\Microsoft SQL Server\110\Tools\PowerShell\Modules\SQLPS\SQLPS.PSD1"
+        $pspaths = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" -Name PSModulePath).PSModulePath -split ';'
+        $sqlps = Join-Path ($pspaths | ? {$_ -like "*$SQLVersion*"}) "SQLPS\SQLPS.PSD1"
+        Import-Module $sqlps
 $query = @"
 SELECT 
 name AS [LogicalName]
